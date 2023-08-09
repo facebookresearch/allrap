@@ -17,6 +17,6 @@ The subset loss, see Section \ref{sec:tuple_loss}, acts on the batch of noisy 3D
 
 Run
 ```
-python sup3d.py
+python experiment_sup3d.py
 ```
 
