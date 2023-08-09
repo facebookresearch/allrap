@@ -1,4 +1,4 @@
-def weak_negative_correlation(v, z)
+def weak_negative_correlation(v, z):
     v=v.flatten()
     z=z.flatten()
     v=v-v.mean()

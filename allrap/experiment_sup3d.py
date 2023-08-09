@@ -4,7 +4,7 @@ import losses.visibility
 import model.mlp_mixer
 import data.sup3d
 
-device='cuda:0' torch.cuda.is_available() else 'cpu'
+device='cuda:0' if torch.cuda.is_available() else 'cpu'
 dataloader = data.sup3d.loaders()
 
 seed=0
