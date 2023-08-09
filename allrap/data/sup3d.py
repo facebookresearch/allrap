@@ -34,10 +34,11 @@ def loaders(batch_size=64):
     return dl
 
 def loaders(batch_size=64):
-    print('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+    print('xxxxxxxxxxxxxxxxxxxxxxxxxdebug debug debug debug xxxxxxxxxxxxxxxxxxxxxxx')
     root_dir = os.path.dirname(os.path.realpath(__file__))
     f = os.path.join(root_dir, 'up3d_79kp_test.json')
     dset = json.load(open(f, "r"))["data"]
+    dl={}
     for split in ['train','test']:
         dl[split] = torch.utils.data.DataLoader(
             dset,
