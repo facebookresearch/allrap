@@ -1,4 +1,5 @@
 # Unsupervised 2D-3D lifting of non-rigid objects using local constraints
+## Supplementary material for submission 106
 
 This repository contains a PyTorch implementation of the ALLRAP model and training lossses.
 
@@ -16,6 +17,6 @@ The subset loss, see Section \ref{sec:tuple_loss}, acts on the batch of noisy 3D
 
 Run
 ```
-python train_sup3d.py
+python sup3d.py
 ```
 
