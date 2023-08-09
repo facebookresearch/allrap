@@ -60,68 +60,21 @@ def MLP(
     activation=torch.nn.GELU,
     init_zero=True,
     residual=True,
-    norm_type="bn",
     dropout=0.1,
 ):
-    assert norm_type in ["bn", "ln", "None"]
-    # expand provides the ratio in which we increase the
-    # TODO: Try initialising the second linear as 0 so that
-    # the residual makes it an identity
-    if norm_type == "bn":
-        mlp = torch.nn.Sequential(
-            Linear_BN(n, int(n * expand), activation=activation),
-            torch.nn.Linear(int(n * expand), n),
-            Drop(dropout),
-        )
-
-    elif norm_type == "ln":
-        # layer_n = torch.nn.LayerNorm([lay_norm_dim_1, lay_norm_dim_2])
-        layer_n = torch.nn.LayerNorm([n])
-        mlp = torch.nn.Sequential(
-            layer_n,
-            torch.nn.Linear(n, n * expand),
-            activation(),
-            torch.nn.Linear(n * expand, n),
-            Drop(dropout),
-        )
-
-    elif norm_type == "None":
-        mlp = torch.nn.Sequential(
-            torch.nn.Linear(n, n * expand),
-            activation(),
-            torch.nn.Linear(n * expand, n),
-            Drop(dropout),
-        )
+    mlp = torch.nn.Sequential(
+        Linear_BN(n, int(n * expand), activation=activation),
+        torch.nn.Linear(int(n * expand), n),
+        Drop(dropout),
+    )
     if init_zero:
         with torch.no_grad():
             mlp[-2].weight.zero_()
             mlp[-2].bias.zero_()
-
     result = mlp
     if residual:
         result = Residual(mlp)
-
     return result
-
-
-def NonMixerBlock(
-    dim=384,
-    expand=4,
-    activation=torch.nn.GELU,
-    init_zero=True,
-    residual=True,
-    norm_type="bn",
-    dropout=0.1,
-):
-    return MLP(
-        n=dim,
-        expand=expand,
-        init_zero=init_zero,
-        residual=residual,
-        dropout=dropout,
-        norm_type=norm_type,
-        activation=activation,
-    )
 
 
 def MixerBlock(
@@ -131,11 +84,10 @@ def MixerBlock(
     activation=torch.nn.GELU,
     init_zero=True,
     residual=True,
-    norm_type="bn",
     dropout=0.1,
 ):
-    if isinstance(expand,(int,float)):
-        expand=(expand,expand)
+    if isinstance(expand, (int, float)):
+        expand = (expand, expand)
     return torch.nn.Sequential(
         Transpose(),
         MLP(
@@ -144,7 +96,6 @@ def MixerBlock(
             init_zero=init_zero,
             residual=residual,
             dropout=dropout,
-            norm_type=norm_type,
             activation=activation,
         ),
         Transpose(),
@@ -154,7 +105,6 @@ def MixerBlock(
             init_zero=init_zero,
             residual=residual,
             dropout=dropout,
-            norm_type=norm_type,
             activation=activation,
         ),
     )
@@ -175,7 +125,6 @@ class Attention(torch.nn.Module):
         attn_ratio=1,
         attn_bias=False,
         activation=torch.nn.GELU,
-        norm_type="bn",
         init_zero=True,
     ):
         super().__init__()
@@ -226,12 +175,10 @@ def TransformerBlock(
     attn_ratio=1,
     attn_bias=False,
     activation=torch.nn.GELU,
-    norm_type="bn",
     dropout=0,
     init_zero=True,
 ):
     assert dropout == 0, dropout
-    assert norm_type == "bn"
     return torch.nn.Sequential(
         Residual(
             Attention(
@@ -242,40 +189,39 @@ def TransformerBlock(
                 attn_ratio,
                 attn_bias,
                 activation,
-                norm_type,
             )
         ),
-        Residual(
             MLP(
                 dim,
                 mlp_ratio,
                 activation,
                 init_zero=init_zero,
                 residual=True,
-                norm_type=norm_type,
                 dropout=0,
             )
-        ),
     )
 
 
-# FINAL
-class MLPMixerPoseNet(torch.nn.Module):
+class MLPMixer(torch.nn.Module):
     def __init__(
         self,
         n_kpts=79,
-        activation=torch.nn.Hardswish,
+        activation=torch.nn.ReLU,
         expand=2,
-        hidden_layers=12,
+        hidden_layers=32,
         all_vis=False,
         dropout=0,
         norm_type="bn",
         residual=True,
-        dim=32 * 2,
+        dim=32,
         init_zero=True,
         initial_nonlinearity=False,
+        camera="orthographic",
+        training_noise = 0.05
     ):
         super(MLPMixerPoseNet, self).__init__()
+        self.camera = camera
+        self.training_noise = noise
         self.n_kpts = n_kpts
         self.pose_dim = 3
         self.dim = dim
@@ -300,65 +246,50 @@ class MLPMixerPoseNet(torch.nn.Module):
                     dropout,
                 )
             )
-        self.net = torch.nn.Sequential(*layers)
-        print('#param', sum([v.numel() for v in self.parameters()]))
+        self.mlp_mixer = torch.nn.Sequential(*layers)
+        print("#param", sum([v.numel() for v in self.parameters()]))
 
-    def forward(self, x):
+    def forward(self, xy, visibility):
         """
-        x: (B,skeleton,3)
+        xy: tensor (batch, n_keypoints, 2)
+        visibility: tensor (batch, n_keypoints)
         """
-        with torch.no_grad():
-            vcm = (x*x[:,:,2:]).sum(1,keepdim=True)/x[:,:,2:].sum(1,keepdim=True)
-            if self.training:
-                vcm+=torch.randn_like(vcm)*0.05
-            vcm[:,:,2].zero_()
-        x=x-vcm
-            
-        # Input
-        visible = x[:, :, 2:]
-        pose_xy = x[:, :, :2]
 
-        x = self.input_projection(x)
-        x = self.net(x)
-        x = self.output_projection(x)
-        # Predicted
-        predicted_xy = x[:, :, :2]
-        predicted_z = x[:, :, 2:]
+        v = visiblilty[:, :, None]
 
-        # For xy: Mask out the occluded points and use only predicted values for
-        # them and vice versa for the visible points, for z: concat predicted z to it
-        poses = torch.cat(
-            [pose_xy * visible + predicted_xy * (1 - visible), predicted_z], 2
-        )
-        return poses + vcm
+        if self.camera == "orthographic":
+            # Center using visible keypoints
+            vcm = (xy * v).sum(1, keepdim=True) / v.sum(1, keepdim=True)
+            if self.training and self.training_noise>0:
+                vcm += torch.randn_like(vcm) * self.training_noise
+            xy_centered = xy - vcm
 
-    def forward_perspective(self, x, cam, scale_pred=False):
-        # Input
-        visible = x[:, :, 2:]
-        pose_xy = x[:, :, :2]
+            X = torch.cat([xy_centered, v], dim=2)
+            X = self.input_projection(X)
+            X = self.mlp_mixer(X)
+            X = self.output_projection(X)
 
-        x = self.input_projection(x)
-        x = self.net(x)
-        x = self.output_projection(x)
-
-        # Prediicted
-        predicted_xy = x[:, :, :2]
-        predicted_z = torch.nn.functional.softplus(x[:, :, 2:])
-
-        # For xy: Mask out the occluded points and use only predicted values for
-        # them and vice versa for the visible points, for z: concat predicted z to it
-        if scale_pred:
-            poses = torch.cat(
-                [
-                    pose_xy * visible + predicted_xy * (1 - visible),
-                    predicted_z,
-                ],
-                2,
+            # For visible points: use xy
+            # For occluded point: use predicted_xy
+            predicted_xy = X[:, :, :2] + vcm
+            predicted_z = X[:, :, 2:]
+            xyz = torch.cat(
+                [xy * visible + predicted_xy * (1 - visible), predicted_z], 2
             )
-            poses = cam.unproject_points(poses)
-        else:
-            poses = cam.unproject_points(
-                torch.cat([pose_xy, predicted_z], 2)
+
+        else:  # Perspective camera
+            X = torch.cat([xy, v], dim=2)
+
+            X = self.input_projection(X)
+            X = self.mlp_mixer(X)
+            X = self.output_projection(X)
+
+            # For visible points: use xy
+            # For occluded point: use predicted_xy
+            predicted_xy = X[:, :, :2]
+            predicted_z = torch.nn.functional.softplus(X[:, :, 2:])
+            xyz = self.camera.unproject_points(
+                torch.cat([xy, predicted_z], 2)
             ) * visible + torch.cat(
                 [
                     predicted_xy,
@@ -368,105 +299,7 @@ class MLPMixerPoseNet(torch.nn.Module):
             ) * (
                 1 - visible
             )
-        return poses
-
-
-
-class MLPNonMixerPoseNet(torch.nn.Module):
-    def __init__(
-        self,
-        n_kpts=79,
-        activation=torch.nn.Hardswish,
-        expand=4,
-        hidden_layers=6,
-        all_vis=False,
-        dropout=0.0,
-        norm_type="bn",
-        residual=True,
-        dim=512,
-        init_zero=True,
-        initial_nonlinearity=False,
-    ):
-        super(MLPNonMixerPoseNet, self).__init__()
-        self.n_kpts = n_kpts
-        self.pose_dim = 3
-        self.dim = dim
-
-        # Increase the dimension of the visual input data to the transformer dimensions
-        self.input_projection = torch.nn.Linear(n_kpts * self.pose_dim, dim)
-        self.output_projection = torch.nn.Linear(dim, n_kpts * self.pose_dim)
-        layers = []
-        if initial_nonlinearity:
-            layers.append(activation())
-        for _ in range(hidden_layers):
-            layers.append(
-                NonMixerBlock(
-                    dim, expand, activation, init_zero, residual, norm_type, dropout
-                )
-            )
-        self.net = torch.nn.Sequential(*layers)
-
-    def forward(self, x):
-        """
-        x: (B,skeleton,3)
-        """
-
-        # Input
-        visible = x[:, :, 2:]
-        pose_xy = x[:, :, :2]
-
-        x = x.flatten(1, 2)
-        x = self.input_projection(x)
-        x = self.net(x)
-        x = self.output_projection(x)
-        x = x.reshape(-1, self.n_kpts, self.pose_dim)
-        # Predicted
-        predicted_xy = x[:, :, :2]
-        predicted_z = x[:, :, 2:]
-
-        # For xy: Mask out the occluded points and use only predicted values for
-        # them and vice versa for the visible points, for z: concat predicted z to it
-        poses = torch.cat(
-            [pose_xy * visible + predicted_xy * (1 - visible), predicted_z], 2
-        )
-        return poses
-
-    def forward_perspective(self, x, scale_pred=False):
-        # Input
-        visible = x[:, :, 2:]
-        pose_xy = x[:, :, :2]
-
-        x = x.flatten(1, 2)
-        x = self.input_projection(x)
-        x = self.net(x)
-        x = self.output_projection(x)
-        x = x.reshape(-1, self.n_kpts, self.pose_dim)
-
-        # Prediicted
-        predicted_xy = x[:, :, :2]
-        predicted_z = torch.nn.functional.softplus(x[:, :, 2:])
-        # predicted_z = torch.tanh(x[:, :, 2:])+1.1
-
-        # For xy: Mask out the occluded points and use only predicted values for
-        # them and vice versa for the visible points, for z: concat predicted z to it
-        if scale_pred:
-            poses = torch.cat(
-                [
-                    pose_xy * visible * predicted_z
-                    + predicted_xy * (1 - visible) * predicted_z,
-                    predicted_z,
-                ],
-                2,
-            )
-        else:
-            poses = torch.cat(
-                [
-                    pose_xy * visible * predicted_z + predicted_xy * (1 - visible),
-                    predicted_z,
-                ],
-                2,
-            )
-        return poses
+        return xyz
 
 
 class Transformer(torch.nn.Module):
@@ -481,11 +314,9 @@ class Transformer(torch.nn.Module):
         attn_bias=True,
         pos_embed=True,
         activation=torch.nn.Hardswish,
-        norm_type="bn",
         dropout=0,
         init_zero=True,
         hidden_layers=6,
-        all_vis=False,
         initial_nonlinearity=False,
     ):
         super().__init__()
@@ -516,34 +347,35 @@ class Transformer(torch.nn.Module):
                     attn_ratio,
                     attn_bias,
                     activation,
-                    norm_type,
                     dropout,
                     init_zero,
                 )
             )
         self.net = torch.nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, xy, visibility):
         """
         x: (B,skeleton,3)
         """
+        v = visiblilty[:, :, None]
+        # Center using visible keypoints
+        vcm = (xy * v).sum(1, keepdim=True) / v.sum(1, keepdim=True)
+        if self.training and self.training_noise>0:
+            vcm += torch.randn_like(vcm) * self.training_noise
+        xy_centered = xy - vcm
 
-        # Input
-        visible = x[:, :, 2:]
-        pose_xy = x[:, :, :2]
-
-        x = self.input_projection(x)
+        X = torch.cat([xy_centered, v], dim=2)
+        X = self.input_projection(X)
         if hasattr(self, "position_bias"):
-            x = x + self.position_bias
-        x = self.net(x)
-        x = self.output_projection(x)
-        # Predicted
-        predicted_xy = x[:, :, :2]
-        predicted_z = x[:, :, 2:]
+            X = X + self.position_bias
+        X = self.net(X)
+        X = self.output_projection(X)
 
-        # For xy: Mask out the occluded points and use only predicted values for
-        # them and vice versa for the visible points, for z: concat predicted z to it
-        poses = torch.cat(
-            [pose_xy * visible + predicted_xy * (1 - visible), predicted_z], 2
+        # For visible points: use xy
+        # For occluded point: use predicted_xy
+        predicted_xy = X[:, :, :2] + vcm
+        predicted_z = X[:, :, 2:]
+        xyz = torch.cat(
+            [xy * visible + predicted_xy * (1 - visible), predicted_z], 2
         )
-        return poses
+        return xyz

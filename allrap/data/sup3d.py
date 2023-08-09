@@ -3,8 +3,8 @@ import torch, os, json, urllib.request
 # https://github.com/facebookresearch/c3dpo_nrsfm/blob/main/dataset/dataset_configs.py
 
 DATASET_URL = {
-    "test": "https://dl.fbaipublicfiles.com/c3dpo_nrsfm/up3d_79kp_test.json",
     "train": "https://dl.fbaipublicfiles.com/c3dpo_nrsfm/up3d_79kp_train.json",
+    "test": "https://dl.fbaipublicfiles.com/c3dpo_nrsfm/up3d_79kp_test.json",
 }
 
 DATASET_MD5 = {
@@ -33,9 +33,62 @@ def loaders(batch_size=64):
         )
     return dl
 
+def loaders(batch_size=64):
+    print('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
+    root_dir = os.path.dirname(os.path.realpath(__file__))
+    f = os.path.join(root_dir, 'up3d_79kp_test.json')
+    dset = json.load(open(f, "r"))["data"]
+    for split in ['train','test']:
+        dl[split] = torch.utils.data.DataLoader(
+            dset,
+            num_workers=8,
+            pin_memory=True,
+            batch_size=batch_size,
+            shuffle=split == "train",
+            drop_last=split == "train",
+        )
+    return dl
 
 # https://github.com/facebookresearch/c3dpo_nrsfm/blob/main/dataset/eval_zoo.py
 
+def calc_dist_err(gt, pred, scale=1.,
+                  fix_mean_depth=False,
+                  get_best_scale=False,
+                  mask=None):
+
+    assert pred.shape[1] == 3
+    assert gt.shape[1] == 3
+    assert pred.shape[0] == gt.shape[0]
+    assert pred.shape[2] == gt.shape[2]
+
+    if fix_mean_depth:
+        # print('setting mean depth = 0')
+        pred = set_mean_depth_to_0(pred, mask=mask)
+        gt = set_mean_depth_to_0(gt,   mask=mask)
+
+    if get_best_scale:
+        argmin_scale = compute_best_scale(pred, gt, v=mask)
+        pred = pred.copy() * argmin_scale[:, None, None]
+
+    df = pred - gt
+    errs = np_safe_sqrt((df*df).sum(1))
+
+    if True:
+        errs_ = np.sqrt((df*df).sum(1))
+        df__ = np.max(np.abs(errs-errs_))
+        assert df__ <= 1e-5
+        # print('err diff = %1.2e' % df__)
+
+    if mask is not None:
+        assert mask.shape[0] == pred.shape[0]
+        assert mask.shape[1] == pred.shape[2]
+        assert len(mask.shape) == 2
+        errs = (mask*errs).sum(1) / mask.sum(1)
+    else:
+        errs = errs.mean(1)
+
+    errs = errs * scale
+    return errs
 
 def calc_3d_errs(
     pred, gt, fix_mean_depth=False, get_best_scale=False, scale=float(1), mask=None
