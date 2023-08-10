@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torchvision
-from pixar_replay.experimental.models.syncmatch.rotation_sync import tb3_to_se3
 
 res = faiss.StandardGpuResources()  # use a single GPU
 

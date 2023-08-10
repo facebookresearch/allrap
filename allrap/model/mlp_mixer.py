@@ -80,7 +80,7 @@ def MixerBlock(
     n_kpts=79,
     dim=32,
     expand=2,
-    activation=torch.nn.GELU,
+    activation=torch.nn.ReLU,
     init_zero=True,
     dropout=0,
 ):
@@ -247,7 +247,7 @@ class MLPMixer(torch.nn.Module):
             vcm = (xy * v).sum(1, keepdim=True) / v.sum(1, keepdim=True)
             if self.training and self.training_noise > 0:
                 vcm += torch.randn_like(vcm) * self.training_noise
-            xy_centered = xy - vcm * v
+            xy_centered = xy - vcm
 
             X = torch.cat([xy_centered, v], dim=2)
             X = self.input_projection(X)
