@@ -68,7 +68,6 @@ for epoch in range(epoch, 300):
         gt = torch.cat(gt)
         pred = torch.cat(pred)
         visi = torch.cat(visi)
-        print(pred.shape)
         pred[:, 2, :] -= pred[:, 2, :].mean(1, keepdim=True)
         results, _ = data.sup3d.eval_up3d_79kp(
             {"kp_loc_3d": gt, "shape_image_coord": pred}

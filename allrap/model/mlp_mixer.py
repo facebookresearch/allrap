@@ -71,10 +71,9 @@ def MLP(
         with torch.no_grad():
             mlp[-2].weight.zero_()
             mlp[-2].bias.zero_()
-    result = mlp
     if residual:
-        result = Residual(mlp)
-    return result
+        mlp = Residual(mlp)
+    return mlp
 
 
 def MixerBlock(
@@ -83,7 +82,7 @@ def MixerBlock(
     expand=2,
     activation=torch.nn.GELU,
     init_zero=True,
-    dropout=0.1,
+    dropout=0,
 ):
     if isinstance(expand, (int, float)):
         expand = (expand, expand)

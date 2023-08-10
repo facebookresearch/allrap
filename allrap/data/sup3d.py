@@ -15,6 +15,7 @@ DATASET_MD5 = {
 
 def loaders(batch_size=64):
     root_dir = os.path.dirname(os.path.realpath(__file__))
+    dset=torch.load('dset.pth')
     dl = {}
     for split, url in DATASET_URL.items():
         f = os.path.join(root_dir, url.split("/")[-1])
@@ -22,15 +23,16 @@ def loaders(batch_size=64):
             print(f"Downloading {url} to {f} ...")
             urllib.request.urlretrieve(url, f)
         print(f"Loading {f} ...")
-        dset = json.load(open(f, "r"))["data"]
-        for x in dset:
-            for k in ["kp_loc", "kp_vis", "kp_loc_3d"]:
-                if split == "train" and k == "kp_loc_3d":
-                    del x[k]
-                else:
-                    x[k] = torch.tensor(x[k])
+        # dset = json.load(open(f, "r"))["data"]
+        # for x in dset:
+        #     for k in ["kp_loc", "kp_vis", "kp_loc_3d"]:
+        #         if split == "train" and k == "kp_loc_3d":
+        #             del x[k]
+        #         else:
+        #             x[k] = torch.tensor(x[k])
+        
         dl[split] = torch.utils.data.DataLoader(
-            dset,
+            dset[split],
             num_workers=8,
             pin_memory=True,
             batch_size=batch_size,
@@ -40,25 +42,27 @@ def loaders(batch_size=64):
     return dl
 
 
-# def loaders(batch_size=64):
-#     print('xxxxxxxxxxxxxxxxxxxxxxxxxdebug debug debug debug xxxxxxxxxxxxxxxxxxxxxxx')
-#     root_dir = os.path.dirname(os.path.realpath(__file__))
-#     f = os.path.join(root_dir, 'up3d_79kp_test.json')
-#     dset = json.load(open(f, "r"))["data"]
-#     for x in dset:
-#         for k in ['kp_loc', 'kp_vis', 'kp_loc_3d']:
-#             x[k]=torch.tensor(x[k])
-#     dl={}
-#     for split in ['train','test']:
-#         dl[split] = torch.utils.data.DataLoader(
-#             dset,
-#             num_workers=8,
-#             pin_memory=True,
-#             batch_size=batch_size,
-#             shuffle=split == "train",
-#             drop_last=split == "train",
-#         )
-#     return dl
+def loadersz(batch_size=64):
+    print('xxxxxxxxxxxxxxxxxxxxxxxxxdebug debug debug debug xxxxxxxxxxxxxxxxxxxxxxx')
+    root_dir = os.path.dirname(os.path.realpath(__file__))
+    f = os.path.join(root_dir, 'up3d_79kp_test.json')
+    # dset = json.load(open(f, "r"))["data"]
+    # for x in dset:
+    #     for k in ['kp_loc', 'kp_vis', 'kp_loc_3d']:
+    #         x[k]=torch.tensor(x[k])
+    # torch.save(dset,'q.pth')
+    dset=torch.load('q.pth')
+    dl={}
+    for split in ['train','test']:
+        dl[split] = torch.utils.data.DataLoader(
+            dset,
+            num_workers=8,
+            pin_memory=True,
+            batch_size=batch_size,
+            shuffle=split == "train",
+            drop_last=split == "train",
+        )
+    return dl
 
 # https://github.com/facebookresearch/c3dpo_nrsfm/blob/main/dataset/eval_zoo.py
 
