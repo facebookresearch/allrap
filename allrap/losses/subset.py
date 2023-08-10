@@ -125,4 +125,3 @@ def random_tuple_aligned_coord_loss(poses, n, k, cpa_with_grad=False, z_scale=Fa
     c = random_k_tuples(n, k, K)
     bnk3 = poses[:, c]
     return tuple_aligned_coord_loss(bnk3, cpa_with_grad=cpa_with_grad, z_scale=z_scale)
-

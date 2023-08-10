@@ -83,7 +83,6 @@ def MixerBlock(
     expand=2,
     activation=torch.nn.GELU,
     init_zero=True,
-    residual=True,
     dropout=0.1,
 ):
     if isinstance(expand, (int, float)):
@@ -94,7 +93,6 @@ def MixerBlock(
             n=n_kpts,
             expand=expand[0],
             init_zero=init_zero,
-            residual=residual,
             dropout=dropout,
             activation=activation,
         ),
@@ -103,7 +101,6 @@ def MixerBlock(
             n=dim,
             expand=expand[1],
             init_zero=init_zero,
-            residual=residual,
             dropout=dropout,
             activation=activation,
         ),
@@ -191,14 +188,14 @@ def TransformerBlock(
                 activation,
             )
         ),
-            MLP(
-                dim,
-                mlp_ratio,
-                activation,
-                init_zero=init_zero,
-                residual=True,
-                dropout=0,
-            )
+        MLP(
+            dim,
+            mlp_ratio,
+            activation,
+            init_zero=init_zero,
+            residual=True,
+            dropout=0,
+        ),
     )
 
 
@@ -209,30 +206,22 @@ class MLPMixer(torch.nn.Module):
         activation=torch.nn.ReLU,
         expand=2,
         hidden_layers=32,
-        all_vis=False,
         dropout=0,
-        norm_type="bn",
-        residual=True,
         dim=32,
         init_zero=True,
-        initial_nonlinearity=False,
         camera="orthographic",
-        training_noise = 0.05
+        training_noise=0.05,
     ):
-        super(MLPMixerPoseNet, self).__init__()
+        super().__init__()
         self.camera = camera
-        self.training_noise = noise
+        self.training_noise = training_noise
         self.n_kpts = n_kpts
-        self.pose_dim = 3
-        self.dim = dim
 
         # Increase the dimension of the visual input data to the transformer dimensions
-        self.input_projection = torch.nn.Linear(self.pose_dim, dim)
-        self.output_projection = torch.nn.Linear(dim, self.pose_dim)
+        self.input_projection = torch.nn.Linear(3, dim)
+        self.output_projection = torch.nn.Linear(dim, 3)
         layers = []
 
-        if initial_nonlinearity:
-            layers.append(activation())
         for _ in range(hidden_layers):
             layers.append(
                 MixerBlock(
@@ -241,28 +230,25 @@ class MLPMixer(torch.nn.Module):
                     expand,
                     activation,
                     init_zero,
-                    residual,
-                    norm_type,
                     dropout,
                 )
             )
         self.mlp_mixer = torch.nn.Sequential(*layers)
-        print("#param", sum([v.numel() for v in self.parameters()]))
 
-    def forward(self, xy, visibility):
+    def forward(self, xy, visible):
         """
         xy: tensor (batch, n_keypoints, 2)
-        visibility: tensor (batch, n_keypoints)
+        visible: tensor (batch, n_keypoints)
         """
 
-        v = visiblilty[:, :, None]
+        v = visible[:, :, None]
 
         if self.camera == "orthographic":
             # Center using visible keypoints
             vcm = (xy * v).sum(1, keepdim=True) / v.sum(1, keepdim=True)
-            if self.training and self.training_noise>0:
+            if self.training and self.training_noise > 0:
                 vcm += torch.randn_like(vcm) * self.training_noise
-            xy_centered = xy - vcm
+            xy_centered = xy - vcm * v
 
             X = torch.cat([xy_centered, v], dim=2)
             X = self.input_projection(X)
@@ -273,9 +259,7 @@ class MLPMixer(torch.nn.Module):
             # For occluded point: use predicted_xy
             predicted_xy = X[:, :, :2] + vcm
             predicted_z = X[:, :, 2:]
-            xyz = torch.cat(
-                [xy * visible + predicted_xy * (1 - visible), predicted_z], 2
-            )
+            xyz = torch.cat([xy * v + predicted_xy * (1 - v), predicted_z], 2)
 
         else:  # Perspective camera
             X = torch.cat([xy, v], dim=2)
@@ -290,14 +274,14 @@ class MLPMixer(torch.nn.Module):
             predicted_z = torch.nn.functional.softplus(X[:, :, 2:])
             xyz = self.camera.unproject_points(
                 torch.cat([xy, predicted_z], 2)
-            ) * visible + torch.cat(
+            ) * v + torch.cat(
                 [
                     predicted_xy,
                     predicted_z,
                 ],
                 2,
             ) * (
-                1 - visible
+                1 - v
             )
         return xyz
 
@@ -318,11 +302,11 @@ class Transformer(torch.nn.Module):
         init_zero=True,
         hidden_layers=6,
         initial_nonlinearity=False,
+        training_noise=0.05,
     ):
         super().__init__()
         self.n_kpts = n_kpts
-        self.pose_dim = 3
-        self.dim = dim
+        self.training_noise = training_noise
 
         if pos_embed:
             self.register_buffer(
@@ -330,8 +314,8 @@ class Transformer(torch.nn.Module):
             )
 
         # Increase the dimension of the visual input data to the transformer dimensions
-        self.input_projection = torch.nn.Linear(self.pose_dim, dim)
-        self.output_projection = torch.nn.Linear(dim, self.pose_dim)
+        self.input_projection = torch.nn.Linear(3, dim)
+        self.output_projection = torch.nn.Linear(dim, 3)
         layers = []
 
         if initial_nonlinearity:
@@ -353,16 +337,16 @@ class Transformer(torch.nn.Module):
             )
         self.net = torch.nn.Sequential(*layers)
 
-    def forward(self, xy, visibility):
+    def forward(self, xy, visible):
         """
         x: (B,skeleton,3)
         """
-        v = visiblilty[:, :, None]
+        v = visible[:, :, None]
         # Center using visible keypoints
         vcm = (xy * v).sum(1, keepdim=True) / v.sum(1, keepdim=True)
-        if self.training and self.training_noise>0:
+        if self.training and self.training_noise > 0:
             vcm += torch.randn_like(vcm) * self.training_noise
-        xy_centered = xy - vcm
+        xy_centered = xy - vcm * v
 
         X = torch.cat([xy_centered, v], dim=2)
         X = self.input_projection(X)
@@ -375,7 +359,5 @@ class Transformer(torch.nn.Module):
         # For occluded point: use predicted_xy
         predicted_xy = X[:, :, :2] + vcm
         predicted_z = X[:, :, 2:]
-        xyz = torch.cat(
-            [xy * visible + predicted_xy * (1 - visible), predicted_z], 2
-        )
+        xyz = torch.cat([xy * v + predicted_xy * (1 - v), predicted_z], 2)
         return xyz

@@ -1,2 +1,3 @@
 *.json
+*.pth
 __pycache__

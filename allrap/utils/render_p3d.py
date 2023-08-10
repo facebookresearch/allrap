@@ -1,11 +1,15 @@
 import torchvision, PIL.Image, PIL.ImageDraw, PIL.ImageFont, numpy as np
 import torch, pytorch3d, pytorch3d.io, icosphere, matplotlib.pyplot as plt
 
-def cam(dist=1,at=torch.zeros(3),azim=0,elev=0,device='cpu'):
+
+def cam(dist=1, at=torch.zeros(3), azim=0, elev=0, device="cpu"):
     cam = pytorch3d.renderer.PerspectiveCameras().to(device)
-    at=at.to(device)
-    cam.R,cam.T=pytorch3d.renderer.cameras.look_at_view_transform(dist=dist,at=at[None,:],azim=azim,elev=elev,device=device)
+    at = at.to(device)
+    cam.R, cam.T = pytorch3d.renderer.cameras.look_at_view_transform(
+        dist=dist, at=at[None, :], azim=azim, elev=elev, device=device
+    )
     return cam
+
 
 @torch.no_grad()
 def chessboard(r=1, z=0, n=8, device="cpu"):
@@ -15,13 +19,13 @@ def chessboard(r=1, z=0, n=8, device="cpu"):
     V.append([t[0], z - 1e-3, t[-1]])
     V.append([t[-1], z - 1e-3, t[0]])
     V.append([t[-1], z - 1e-3, t[-1]])
-    F.extend([[0,1,2],[2,3,1]])
-    C.append([0,0,0])
-    C.append([0,0,0])
-    C.append([0,0,0])
-    C.append([0,0,0])
+    F.extend([[0, 1, 2], [2, 3, 1]])
+    C.append([0, 0, 0])
+    C.append([0, 0, 0])
+    C.append([0, 0, 0])
+    C.append([0, 0, 0])
     for i in range(n):
-        for j in range((i+1)%2,n,2):
+        for j in range((i + 1) % 2, n, 2):
             q = len(V)
             F.append((q, q + 1, q + 2))
             F.append((q + 1, q + 3, q + 2))
@@ -33,51 +37,62 @@ def chessboard(r=1, z=0, n=8, device="cpu"):
         torch.tensor(V, device=device),
         torch.tensor(F, device=device, dtype=torch.int64),
         torch.tensor(C, device=device, dtype=torch.float32),
-        ]
+    ]
+
 
 @torch.no_grad()
-def cylinder(x,y,r,N,rgb,device='cpu'):
-    x=x.to(device)
-    y=y.to(device)
-    n=y-x
-    n = torch.stack([n,torch.randn_like(n,device=device),torch.randn_like(n,device=device)],1)
-    n=torch.linalg.qr(n).Q.mT
-    assert torch.dot(x-y,n[0])!=0
-    assert torch.dot(n[0],n[1]).abs() < 1e-6
-    assert torch.dot(n[0],n[2]).abs() < 1e-6
-    assert torch.dot(n[1],n[2]).abs() < 1e-6
+def cylinder(x, y, r, N, rgb, device="cpu"):
+    x = x.to(device)
+    y = y.to(device)
+    n = y - x
+    n = torch.stack(
+        [n, torch.randn_like(n, device=device), torch.randn_like(n, device=device)], 1
+    )
+    n = torch.linalg.qr(n).Q.mT
+    assert torch.dot(x - y, n[0]) != 0
+    assert torch.dot(n[0], n[1]).abs() < 1e-6
+    assert torch.dot(n[0], n[2]).abs() < 1e-6
+    assert torch.dot(n[1], n[2]).abs() < 1e-6
 
-    t0=torch.linspace(0,2*torch.pi,N+1)[:N].to(device)
-    t1=t0+torch.pi/N
-    V=torch.cat([
-        x+r*torch.cos(t0)[:,None]*n[1]+r*torch.sin(t0)[:,None]*n[2],
-        y+r*torch.cos(t1)[:,None]*n[1]+r*torch.sin(t1)[:,None]*n[2],
-    ])
+    t0 = torch.linspace(0, 2 * torch.pi, N + 1)[:N].to(device)
+    t1 = t0 + torch.pi / N
+    V = torch.cat(
+        [
+            x + r * torch.cos(t0)[:, None] * n[1] + r * torch.sin(t0)[:, None] * n[2],
+            y + r * torch.cos(t1)[:, None] * n[1] + r * torch.sin(t1)[:, None] * n[2],
+        ]
+    )
     F = []
     for i in range(N):
-        F.append([i,(i+1)%N,i+N])
-        F.append([(i+1)%N,(i+1)%N+N,i+N,])
-    F=torch.tensor(F).to(device)
+        F.append([i, (i + 1) % N, i + N])
+        F.append(
+            [
+                (i + 1) % N,
+                (i + 1) % N + N,
+                i + N,
+            ]
+        )
+    F = torch.tensor(F).to(device)
     C = rgb[None, :].to(device).expand_as(V).contiguous()
     return [V, F, C]
-        
+
 
 @torch.no_grad()
-def sphere(xyz, r, rgb, device="cpu",invert=False,n=4):
+def sphere(xyz, r, rgb, device="cpu", invert=False, n=4):
     if isinstance(xyz, (list, tuple)):
         xyz = torch.tensor(xyz, dtype=torch.float32, device=device)
     if isinstance(rgb, (list, tuple)):
         rgb = torch.tensor(rgb, dtype=torch.float32, device=device)
     V, F = icosphere.icosphere(n)
-    V = torch.from_numpy(V*r).float().to(device) + xyz.to(device)
+    V = torch.from_numpy(V * r).float().to(device) + xyz.to(device)
     F = torch.from_numpy(F).long().to(device)
     if invert:
-        F=torch.flip(F,(1,))
+        F = torch.flip(F, (1,))
     C = rgb[None, :].expand_as(V).contiguous()
     return [V, F, C]
 
 
-def make_mesh(l,opacity=None):
+def make_mesh(l, opacity=None):
     V, F, C = [], [], []
     offset = 0
     for v, f, c in l:
@@ -89,20 +104,18 @@ def make_mesh(l,opacity=None):
     F = torch.cat(F)
     C = torch.cat(C)
     if opacity is not None:
-        C=torch.cat([C,torch.ones_like(C[:,:1])*opacity],1)
+        C = torch.cat([C, torch.ones_like(C[:, :1]) * opacity], 1)
     return pytorch3d.structures.Meshes(
         [V],
         [F],
         textures=pytorch3d.renderer.mesh.textures.TexturesVertex([C]),
     )
 
-def render_mesh2(mesh,cam,resolution=512,pad=0,light=[0,6,0],a=0,b=1):
-    device=cam.R.device
+
+def render_mesh2(mesh, cam, resolution=512, pad=0, light=[0, 6, 0], a=0, b=1):
+    device = cam.R.device
     raster_settings = pytorch3d.renderer.RasterizationSettings(
-        image_size=resolution+2*pad,
-        blur_radius=a,
-        faces_per_pixel=b,
-        bin_size=0
+        image_size=resolution + 2 * pad, blur_radius=a, faces_per_pixel=b, bin_size=0
     )
 
     lights = pytorch3d.renderer.PointLights(
@@ -111,9 +124,7 @@ def render_mesh2(mesh,cam,resolution=512,pad=0,light=[0,6,0],a=0,b=1):
         # ambient_color=((0.9, 0.9, 0.9), ),
         # diffuse_color=((0.1, 0.1, 0.1), ),
         # specular_color=((0.0, 0.0, 0.0), )
-    ).to(
-        device
-    )
+    ).to(device)
     renderer = pytorch3d.renderer.MeshRenderer(
         rasterizer=pytorch3d.renderer.MeshRasterizer(
             cameras=cam, raster_settings=raster_settings
@@ -122,23 +133,26 @@ def render_mesh2(mesh,cam,resolution=512,pad=0,light=[0,6,0],a=0,b=1):
             device=device, cameras=cam, lights=lights
         ),
     )
-    images = renderer(mesh)[0][:,:,:3]
-    if pad>0:
-        images=images[pad:-pad,pad:-pad]
-    return images.permute(2,0,1)
+    images = renderer(mesh)[0][:, :, :3]
+    if pad > 0:
+        images = images[pad:-pad, pad:-pad]
+    return images.permute(2, 0, 1)
+
 
 def annotate(image, msg):
-    fnt = PIL.ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=32)
-    image=torchvision.transforms.functional.to_pil_image(image)
+    fnt = PIL.ImageFont.truetype(
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=32
+    )
+    image = torchvision.transforms.functional.to_pil_image(image)
     d = PIL.ImageDraw.Draw(image)
-    d.text((10,10), msg,font=fnt, fill=(10, 10, 10))
+    d.text((10, 10), msg, font=fnt, fill=(10, 10, 10))
     return torchvision.transforms.functional.to_tensor(image)
 
 
 class OpacityVertexShader(torch.nn.Module):
     def __init__(
         self,
-        device = "cpu",
+        device="cpu",
     ) -> None:
         super().__init__()
         self.to(device)
@@ -152,23 +166,24 @@ class OpacityVertexShader(torch.nn.Module):
         opacity = colors[:, :, :, 0, 3:] + w.sum(-2)
         return c, opacity
 
-def render_mesh(mesh,cam,resolution=512,pad=0):
-    device=cam.R.device
+
+def render_mesh(mesh, cam, resolution=512, pad=0):
+    device = cam.R.device
     raster_settings = pytorch3d.renderer.RasterizationSettings(
-            image_size=resolution+2*pad,
-            blur_radius=0.0,
-            faces_per_pixel=25,
-        )
+        image_size=resolution + 2 * pad,
+        blur_radius=0.0,
+        faces_per_pixel=25,
+    )
     renderer = pytorch3d.renderer.MeshRenderer(
-            rasterizer=pytorch3d.renderer.MeshRasterizer(
-                cameras=cam, raster_settings=raster_settings
-            ),
-            shader=OpacityVertexShader(
-                device=device,
-            ),
-        )
+        rasterizer=pytorch3d.renderer.MeshRasterizer(
+            cameras=cam, raster_settings=raster_settings
+        ),
+        shader=OpacityVertexShader(
+            device=device,
+        ),
+    )
     images = renderer(mesh)
-    images=images[0][0]
-    if pad>0:
-        images=images[pad:-pad,pad:-pad,:3]
-    return images.permute(2,0,1)
+    images = images[0][0]
+    if pad > 0:
+        images = images[pad:-pad, pad:-pad, :3]
+    return images.permute(2, 0, 1)
