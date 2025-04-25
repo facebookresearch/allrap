@@ -1,0 +1,5 @@
+*.json
+*.pth
+*.mp4
+allrap/old_vis
+__pycache__
